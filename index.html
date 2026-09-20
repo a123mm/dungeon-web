@@ -3,166 +3,227 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>地牢 · 登录</title>
+<title>地牢</title>
 <style>
-  /* 整个页面的样子：黑底、等宽字、绿字，跟游戏里的终端一个风格 */
+  /* ---------- 整个页面的样子：黑底、等宽字、绿字，跟游戏里的终端一个风格 ---------- */
+  * { box-sizing: border-box; }
   body {
     margin: 0;
-    padding: 16px;
+    padding: 10px;
     background: #0a0e0a;
     color: #b9f0b9;
-    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-family: ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", monospace;
     font-size: 15px;
-    line-height: 1.6;
+    line-height: 1.55;
+    -webkit-text-size-adjust: 100%;
   }
-  /* 边框框住的那块，模仿游戏里的 ╔══╗ */
-  .box {
-    max-width: 640px;
-    margin: 0 auto;
-    border: 2px solid #2f7d4f;
-    border-radius: 6px;
-    padding: 16px;
-  }
+  .screen { max-width: 640px; margin: 0 auto; }
+  [hidden] { display: none !important; }
+
+  /* ---------- 第一屏：登录框 ---------- */
+  .box { border: 2px solid #2f7d4f; border-radius: 6px; padding: 16px; }
   h1 { font-size: 17px; margin: 0 0 12px; color: #6fd3ff; }
   label { display: block; margin-top: 10px; color: #8ee08e; }
-  input, select {
-    width: 100%;
-    box-sizing: border-box;
-    margin-top: 4px;
-    padding: 8px;
-    background: #061006;
-    color: #d6ffd6;
-    border: 1px solid #2f7d4f;
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 15px;
+  input {
+    width: 100%; margin-top: 4px; padding: 8px;
+    background: #061006; color: #d6ffd6;
+    border: 1px solid #2f7d4f; border-radius: 4px;
+    font-family: inherit; font-size: 15px;
   }
   button {
-    margin: 8px 6px 0 0;
-    padding: 8px 14px;
-    background: #12261a;
-    color: #b9f0b9;
-    border: 1px solid #2f7d4f;
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 15px;
-    cursor: pointer;
+    padding: 10px 14px;
+    background: #12261a; color: #b9f0b9;
+    border: 1px solid #2f7d4f; border-radius: 6px;
+    font-family: inherit; font-size: 15px; cursor: pointer;
   }
-  button:hover { background: #1b3a26; }
-  button:disabled { opacity: 0.4; cursor: default; }
-  /* 日志区：每次请求的结果都打在这里 */
+  button:active { background: #23553a; }
   #log {
-    margin-top: 14px;
-    padding: 8px;
-    background: #051005;
-    border: 1px solid #1d5030;
-    border-radius: 4px;
-    min-height: 90px;
-    white-space: pre-wrap;
-    word-break: break-all;
+    margin-top: 14px; padding: 8px; background: #051005;
+    border: 1px solid #1d5030; border-radius: 4px;
+    min-height: 80px; white-space: pre-wrap; word-break: break-all;
   }
-  .ok { color: #7dff7d; }
-  .err { color: #ff8080; }
-  .dim { color: #6a8a6a; }
-  .info { color: #ffd479; }
   #who { color: #6fd3ff; }
+
+  /* ---------- 第二屏：游戏 ---------- */
+  .topbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  #who2 {
+    flex: 1; color: #6fd3ff; font-size: 13px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* 那个框子。原来是用 ╔═╗ 这些字符画的，现在改用 CSS 的 border 画：
+     手机上那些字符会掉进中文字体、宽度翻倍，框子会歪，这样画就不会。
+     框子的颜色跟着 show() 传进来的颜色变（红色=危险，金色=商店，紫色=战斗）。 */
+  #board { margin-bottom: 10px; }
+  .frame { border: 1px solid #2f7d4f; border-radius: 4px; padding: 8px 10px; background: #061006; }
+  .frame.red    { border-color: #c04a4a; }
+  .frame.green  { border-color: #3fae6a; }
+  .frame.gold   { border-color: #b08a2a; }
+  .frame.purple { border-color: #8a5fd0; }
+  .frame.cyan   { border-color: #35a0c0; }
+
+  .row { white-space: pre-wrap; word-break: break-word; font-size: 14px; }
+  .sep { border-top: 1px solid #1d5030; margin: 6px 0; }
+
+  /* 文字颜色。注意都写成 span.xxx —— 不然 .frame.red 会把自己框里的字全染红 */
+  span.red    { color: #ff8080; }
+  span.green  { color: #7dff7d; }
+  span.gold   { color: #ffd479; }
+  span.blue   { color: #79b8ff; }
+  span.purple { color: #c79bff; }
+  span.cyan   { color: #6fd3ff; }
+  span.grey   { color: #7d987d; }
+  span.bold   { font-weight: 700; }
+  span.dim    { opacity: 0.7; }
+  .ok   { color: #7dff7d; }
+  .err  { color: #ff8080; }
+  .info { color: #ffd479; }
+
+  /* 血条：外面一条空槽，里面一条按百分比上色的实心条（宽度是 game.js 算的） */
+  .bar {
+    display: inline-block; height: 0.85em; background: #0d2415;
+    border: 1px solid #24503a; border-radius: 2px; vertical-align: -0.05em;
+  }
+  .bar i { display: block; height: 100%; background: currentColor; border-radius: 1px; }
+
+  /* 按钮区：自动排成几列，够大，手指点着准 */
+  #buttons { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; }
+  #buttons button { padding: 14px 8px; }
 </style>
 </head>
 <body>
-<div class="box">
-  <h1>地牢 · 云端存档</h1>
 
-  <div>
-    当前状态：<span id="who">未登录</span>
+<!-- ==================== 第一屏：登录 / 注册 ==================== -->
+<div id="screen-login" class="screen">
+  <div class="box">
+    <h1>地牢</h1>
+
+    <div>当前状态：<span id="who">未登录</span></div>
+
+    <label>用户名（3~20 个字母、数字或下划线）
+      <input id="username" autocomplete="username" placeholder="xiaoming">
+    </label>
+    <label>密码（至少 6 位）
+      <input id="password" type="password" autocomplete="current-password" placeholder="******">
+    </label>
+
+    <div style="margin-top:10px">
+      <button id="btnLogin">登录</button>
+      <button id="btnRegister">注册</button>
+    </div>
+
+    <div id="log" class="dim">准备就绪。注册一个账号就能开始。</div>
   </div>
-
-  <!-- 登录 / 注册的表单 -->
-  <label>用户名（3~20 个字母、数字或下划线）
-    <input id="username" autocomplete="username" placeholder="xiaoming">
-  </label>
-  <label>密码（至少 6 位）
-    <input id="password" type="password" autocomplete="current-password" placeholder="******">
-  </label>
-
-  <div>
-    <button id="btnLogin">登录</button>
-    <button id="btnRegister">注册</button>
-    <button id="btnForget">退出登录（清掉本机令牌）</button>
-  </div>
-
-  <!-- 下面这些按钮是"云存档"的测试按钮。等游戏本体搬到网页上以后，
-       游戏就会自己调用 api() 存读档，这几个按钮只是现在用来验链路的。 -->
-  <div style="margin-top:14px" class="dim">—— 云存档测试（游戏本体搬上来之前先用这个验）——</div>
-  <label>槽位
-    <select id="slot">
-      <option value="1">槽 1</option>
-      <option value="2">槽 2</option>
-      <option value="3">槽 3</option>
-    </select>
-  </label>
-  <div>
-    <button id="btnSave">存到云</button>
-    <button id="btnLoad">从云读</button>
-  </div>
-
-  <div id="log" class="dim">准备就绪。</div>
 </div>
 
+<!-- ==================== 第二屏：游戏 ==================== -->
+<div id="screen-game" class="screen" hidden>
+  <div class="topbar">
+    <span id="who2"></span>
+    <button id="btnFast">快进</button>
+    <button id="btnLogout">注销</button>
+  </div>
+  <div id="board"></div>
+  <div id="buttons"></div>
+</div>
+
+<!-- 游戏的规则和画面都在 game.js 里；它要先用上面的 #board 和 #buttons，所以放后面 -->
+<script src="game.js"></script>
 <script>
-// ============ 1. 令牌存在哪里 ============
-// localStorage 是浏览器给的"本机小仓库"，关掉网页也不会丢。
-// 令牌存在这里，下次打开网页能自动认出你。
+// ============================================================================
+// 这一块是"登录"和"云存档"，游戏规则本身在 game.js 里。
+// ============================================================================
+
+// ---------- 1. 令牌存在哪里 ----------
+// localStorage 是浏览器给的"本机小仓库"，关掉网页也不会丢，
+// 所以令牌存这里，下次打开网页能自动认出你。
 const TOKEN_KEY = "dungeon_token";
 const NAME_KEY  = "dungeon_username";
 
 function getToken() { return localStorage.getItem(TOKEN_KEY) || ""; }
+
 function setLogin(token, username) {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(NAME_KEY, username);
-  showWho();
 }
+
 function clearLogin() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(NAME_KEY);
-  showWho();
 }
 
-// 把"当前状态"那一行刷新一下
+// 把"当前状态"那一行刷新一下（登录页和游戏页各有一个）
 function showWho() {
   const token = getToken();
-  const name = localStorage.getItem(NAME_KEY);
-  const el = document.getElementById("who");
-  if (!token) { el.textContent = "未登录"; return; }
+  const name = localStorage.getItem(NAME_KEY) || "";
   // 令牌只显示前 8 位，免得整串被别人看去（截图分享的时候）
-  el.textContent = `${name}（令牌 ${token.slice(0, 8)}…）`;
+  document.getElementById("who").textContent =
+    token ? name + "（令牌 " + token.slice(0, 8) + "…）" : "未登录";
+  document.getElementById("who2").textContent = token ? name : "";
 }
 
-// ============ 2. 带令牌的请求 ============
-// 所有跟服务器要数据的请求都走这个函数：
-// 它会自动把令牌放进请求头 Authorization: Bearer xxxxx，
-// 所以不用在每个按钮里都写一遍。
+// ---------- 2. 带令牌的请求 ----------
+// 所有跟服务器要数据的请求都走这个函数：它会自动把令牌放进请求头
+// Authorization: Bearer xxxxx，所以不用在每个地方都写一遍。
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (options.body !== undefined) headers["content-type"] = "application/json";
   const token = getToken();
-  if (token) headers["Authorization"] = "Bearer " + token;   // ← 就是这一行在"自动带上"
+  if (token) headers["Authorization"] = "Bearer " + token;
   const response = await fetch(path, { ...options, headers });
   const text = await response.text();
   let data = null;
   try { data = JSON.parse(text); } catch { data = { raw: text }; }
-  if (!response.ok) throw new Error(`HTTP ${response.status}：${data.error || text}`);
+  if (!response.ok) {
+    const error = new Error(data.error || ("HTTP " + response.status));
+    error.status = response.status;      // 401 代表"没登录或过期了"
+    throw error;
+  }
   return data;
 }
 
-// ============ 3. 在日志区打印一行 ============
+// ---------- 3. 登录页的日志区 ----------
 function log(message, kind = "") {
   const el = document.getElementById("log");
   const time = new Date().toTimeString().slice(0, 8);
-  el.innerHTML += `\n<span class="${kind}">[${time}] ${message}</span>`;
+  el.innerHTML += '\n<span class="' + kind + '">[' + time + '] ' + message + '</span>';
   el.scrollTop = el.scrollHeight;
 }
 
-// 用户名和密码输入框的值
+// ---------- 4. 进游戏 / 退出来 ----------
+function showScreen(name) {
+  document.getElementById("screen-login").hidden = name !== "login";
+  document.getElementById("screen-game").hidden = name !== "game";
+  showWho();
+}
+
+async function enterGame() {
+  showScreen("game");
+  try {
+    await play();      // ← game.js 里的主循环，一直转到玩家点「注销」
+  } catch (error) {
+    // 点「注销」时 quitGame() 会抛出这个信号，是正常的，不用报错
+    if (!(error instanceof QuitGame)) {
+      show([RED + "出错了：" + error.message + END]);
+    }
+  }
+}
+
+document.getElementById("btnLogout").onclick = () => {
+  quitGame();          // 先打断"正在等按钮"的那一步，不然游戏会卡在那儿
+  clearLogin();
+  showScreen("login");
+  log("已注销，这台手机上的令牌清掉了。", "info");
+};
+
+// 快进：把每步之间等待的时间缩短（战斗动画刷得更快）
+const btnFast = document.getElementById("btnFast");
+btnFast.onclick = () => {
+  SPEED = SPEED === 1 ? 0.15 : 1;
+  btnFast.textContent = SPEED === 1 ? "快进" : "正常";
+};
+
+// ---------- 5. 登录、注册 ----------
 function creds() {
   return {
     username: document.getElementById("username").value.trim(),
@@ -170,68 +231,47 @@ function creds() {
   };
 }
 
-// ============ 4. 四个按钮 ============
-document.getElementById("btnRegister").onclick = async () => {
+async function doAuth(path, verb) {
   const { username, password } = creds();
-  log(`注册中：${username} …`);
+  log(verb + "中：" + username + " …");
   try {
-    const data = await api("/api/register", { method: "POST", body: JSON.stringify({ username, password }) });
+    const data = await api(path, { method: "POST", body: JSON.stringify({ username, password }) });
     setLogin(data.token, data.username);
-    log("注册成功，已经自动登录。令牌存进 localStorage 了。", "ok");
+    await enterGame();
   } catch (error) {
-    log("注册失败：" + error.message, "err");
+    log(verb + "失败：" + error.message, "err");
   }
+}
+
+document.getElementById("btnLogin").onclick = () => doAuth("/api/login", "登录");
+document.getElementById("btnRegister").onclick = () => doAuth("/api/register", "注册");
+
+// 在密码框里按回车 = 点登录
+document.getElementById("password").onkeydown = (event) => {
+  if (event.key === "Enter") document.getElementById("btnLogin").click();
 };
 
-document.getElementById("btnLogin").onclick = async () => {
-  const { username, password } = creds();
-  log(`登录中：${username} …`);
+// ---------- 6. 打开网页时 ----------
+async function boot() {
+  showWho();
+  if (!getToken()) return;                     // 没登录过，就停在登录页
   try {
-    const data = await api("/api/login", { method: "POST", body: JSON.stringify({ username, password }) });
-    setLogin(data.token, data.username);
-    log("登录成功，令牌存进 localStorage 了。", "ok");
+    await api("/api/load?slot=1");             // 随便读一下，能读通说明令牌还有效
+    await enterGame();
   } catch (error) {
-    log("登录失败：" + error.message, "err");
+    // 只有 401（令牌过期/被别的设备挤下线）才清掉登录；
+    // 网络不通、数据库没绑，都不该把人的登录状态弄丢
+    if (error.status === 401) {
+      clearLogin();
+      showWho();
+      log("上次的登录已经过期了，请重新登录。", "info");
+    } else {
+      log("现在连不上服务器：" + error.message + "。点「登录」可以重试。", "err");
+    }
   }
-};
+}
 
-document.getElementById("btnForget").onclick = () => {
-  clearLogin();
-  log("已经清掉本机的令牌（服务器那边的令牌还在，重新登录会换一个新的）。", "info");
-};
-
-// 存到云：随便编一个假的游戏状态，用来验证"存进去的是什么、读出来还是什么"
-document.getElementById("btnSave").onclick = async () => {
-  const slot = Number(document.getElementById("slot").value);
-  const state = {
-    level: 3, max_hp: 76, hp: 42, atk: 9, defense: 4,
-    gold: 128, xp: 10, kills: 7, depth: 4,
-    weapon: { kind: "weapon", name: "铁剑", value: 3 },
-    armor: null, bag: [], 存的时间: new Date().toISOString(),
-  };
-  log(`往槽 ${slot} 存…`);
-  try {
-    await api("/api/save", { method: "POST", body: JSON.stringify({ slot, data: state }) });
-    log(`存好了。槽 ${slot} 现在是：等级 ${state.level}、金币 ${state.gold}、第 ${state.depth} 层。`, "ok");
-  } catch (error) {
-    log("存档失败：" + error.message, "err");
-  }
-};
-
-document.getElementById("btnLoad").onclick = async () => {
-  const slot = Number(document.getElementById("slot").value);
-  log(`从槽 ${slot} 读…`);
-  try {
-    const data = await api(`/api/load?slot=${slot}`);
-    if (data.data === null) log(`槽 ${slot} 还是空的（这个账号没往这里存过）。`, "info");
-    else log(`读到了：${JSON.stringify(data.data)}`, "ok");
-  } catch (error) {
-    log("读档失败：" + error.message, "err");
-  }
-};
-
-// 打开页面先刷新一下"当前状态"
-showWho();
+boot();
 </script>
 </body>
 </html>
