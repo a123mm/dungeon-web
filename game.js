@@ -6,7 +6,8 @@
 //   2. Python 的 input() 等键盘 → 改成等按钮被点（用 Promise）
 //   3. 存档从手机本地文件 → 改成存在云上（/api/save、/api/load）
 //
-// 所以下面的函数名、数字、概率，跟 Python 那份是一一对应的，想对照着改很容易。
+// 所以下面的函数名和 Python 那份是一一对应的，想对照着改很容易。
+// 只有"难度数字"后来单独调过一次（2026-09-20，玩家说太难），跟 Python 那份不再相同。
 // ============================================================================
 
 
@@ -103,13 +104,13 @@ const SAVE_FIELDS = ["level", "max_hp", "hp", "atk", "defense",
                      "gold", "xp", "kills", "depth", "weapon", "armor", "bag"];
 
 function newPlayer() {
-  return { level: 1, max_hp: 40, hp: 40, atk: 6, defense: 1,
+  return { level: 1, max_hp: 50, hp: 50, atk: 6, defense: 2,
            gold: 0, xp: 0, kills: 0, depth: 1, weapon: null, armor: null, bag: [] };
 }
 
 const attackOf = (p) => p.atk + (p.weapon ? p.weapon.value : 0);
 const guardOf = (p) => p.defense + (p.armor ? p.armor.value : 0);
-const xpNeeded = (level) => level * 25;
+const xpNeeded = (level) => level * 20;
 const pickOne = (list) => list[Math.floor(Math.random() * list.length)];
 
 function add(log, text) {
@@ -205,22 +206,22 @@ function spawn(depth) {
   // 最强怪物（地牢领主）从第 8 层才进池子——第 5 层不该撞上它
   const pool = MONSTERS.slice(0, Math.min(MONSTERS.length, 2 + Math.floor(depth / 2)));
   const [name, hp, atk, reward] = pickOne(pool);
-  const grow = 1 + 0.22 * (depth - 1);
+  const grow = 1 + 0.18 * (depth - 1);
   const monster = {
     name: name,
     level: depth,
     max_hp: Math.floor(hp * grow),
     hp: Math.floor(hp * grow),
-    atk: Math.floor(atk * (1 + 0.12 * (depth - 1))),
+    atk: Math.floor(atk * (1 + 0.08 * (depth - 1))),
     xp: Math.floor(reward * grow),
-    gold: Math.floor(reward * grow * 0.8),
+    gold: Math.floor(reward * grow),
   };
-  if (depth % 5 === 0 && Math.random() < 0.35) {
+  if (depth % 5 === 0 && Math.random() < 0.22) {
     monster.name = "首领·" + name;
     monster.boss = true;
-    const boost = 1.15 + 0.02 * depth;          // 第 5 层 ×1.25，第 15 层 ×1.45
+    const boost = 1.10 + 0.015 * depth;         // 第 5 层 ×1.18，第 15 层 ×1.33
     for (const key of ["max_hp", "hp", "xp", "gold"]) monster[key] = Math.floor(monster[key] * boost);
-    monster.atk = Math.floor(monster.atk * (1 + 0.01 * depth));   // 攻击涨得更慢
+    monster.atk = Math.floor(monster.atk * (1 + 0.005 * depth));   // 攻击涨得更慢
   }
   return monster;
 }
@@ -317,11 +318,12 @@ function gainXp(player, amount, log) {
   while (player.xp >= xpNeeded(player.level)) {
     player.xp -= xpNeeded(player.level);
     player.level += 1;
-    player.max_hp += 12;
-    player.hp = Math.min(player.max_hp, player.hp + 12);
+    player.max_hp += 14;
+    player.hp = Math.min(player.max_hp, player.hp + 14);
     player.atk += 2;
+    player.defense += 1;
     add(log, GOLD + BOLD + "升级！" + END + GOLD + " 你现在是 " + player.level +
-             " 级（生命 +12，攻击 +2）。" + END);
+             " 级（生命 +14，攻击 +2，防御 +1）。" + END);
     pause(0.8);
   }
 }
@@ -412,7 +414,7 @@ async function fight(player, monster, log) {
       await openBag(player, log);
       add(log, GREY + "你翻背包的工夫，怪物又逼近了一步。" + END);
     } else if (choice === "4") {
-      if (Math.random() < 0.5) {
+      if (Math.random() < 0.75) {
         add(log, GREY + "你转身就跑，逃掉了。" + END);
         pause(0.4);
         return;
@@ -469,7 +471,7 @@ async function chest(player, log) {
 async function fountain(player, log) {
   add(log, CYAN + "一眼泉水泛着微光……" + END);
   pause(0.6);
-  const gained = heal(player, Math.floor(player.max_hp / 2));
+  const gained = heal(player, Math.floor(player.max_hp * 2 / 3));
   add(log, GREEN + "你喝了几口，恢复 " + gained + " 点生命。" + END);
   pause(0.5);
 }
@@ -501,19 +503,19 @@ async function portal(player, log) {
 }
 
 async function rest(player, log) {
-  if (Math.random() < 0.30) {
+  if (Math.random() < 0.15) {
     add(log, RED + "你刚坐下，阴影里就扑出一只怪物！" + END);
     pause(0.5);
     await fight(player, spawn(player.depth), log);
     return;
   }
-  const gained = heal(player, Math.max(8, Math.floor(player.max_hp / 3)));
+  const gained = heal(player, Math.max(12, Math.floor(player.max_hp / 2)));
   add(log, GREEN + "你靠着石壁歇了一会儿，恢复 " + gained + " 点生命。" + END);
   pause(0.5);
 }
 
-const priceOf = (item) => item.value * (item.kind === "potion" ? 4 : 22);
-const healPrice = (player) => 30 + player.depth * 10;
+const priceOf = (item) => item.value * (item.kind === "potion" ? 3 : 18);
+const healPrice = (player) => 20 + player.depth * 8;
 
 async function shop(player, log) {
   const stock = [];
