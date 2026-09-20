@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>地牢 · 登录</title>
+<style>
+  /* 整个页面的样子：黑底、等宽字、绿字，跟游戏里的终端一个风格 */
+  body {
+    margin: 0;
+    padding: 16px;
+    background: #0a0e0a;
+    color: #b9f0b9;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  /* 边框框住的那块，模仿游戏里的 ╔══╗ */
+  .box {
+    max-width: 640px;
+    margin: 0 auto;
+    border: 2px solid #2f7d4f;
+    border-radius: 6px;
+    padding: 16px;
+  }
+  h1 { font-size: 17px; margin: 0 0 12px; color: #6fd3ff; }
+  label { display: block; margin-top: 10px; color: #8ee08e; }
+  input, select {
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 4px;
+    padding: 8px;
+    background: #061006;
+    color: #d6ffd6;
+    border: 1px solid #2f7d4f;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 15px;
+  }
+  button {
+    margin: 8px 6px 0 0;
+    padding: 8px 14px;
+    background: #12261a;
+    color: #b9f0b9;
+    border: 1px solid #2f7d4f;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  button:hover { background: #1b3a26; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  /* 日志区：每次请求的结果都打在这里 */
+  #log {
+    margin-top: 14px;
+    padding: 8px;
+    background: #051005;
+    border: 1px solid #1d5030;
+    border-radius: 4px;
+    min-height: 90px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .ok { color: #7dff7d; }
+  .err { color: #ff8080; }
+  .dim { color: #6a8a6a; }
+  .info { color: #ffd479; }
+  #who { color: #6fd3ff; }
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>地牢 · 云端存档</h1>
+
+  <div>
+    当前状态：<span id="who">未登录</span>
+  </div>
+
+  <!-- 登录 / 注册的表单 -->
+  <label>用户名（3~20 个字母、数字或下划线）
+    <input id="username" autocomplete="username" placeholder="xiaoming">
+  </label>
+  <label>密码（至少 6 位）
+    <input id="password" type="password" autocomplete="current-password" placeholder="******">
+  </label>
+
+  <div>
+    <button id="btnLogin">登录</button>
+    <button id="btnRegister">注册</button>
+    <button id="btnForget">退出登录（清掉本机令牌）</button>
+  </div>
+
+  <!-- 下面这些按钮是"云存档"的测试按钮。等游戏本体搬到网页上以后，
+       游戏就会自己调用 api() 存读档，这几个按钮只是现在用来验链路的。 -->
+  <div style="margin-top:14px" class="dim">—— 云存档测试（游戏本体搬上来之前先用这个验）——</div>
+  <label>槽位
+    <select id="slot">
+      <option value="1">槽 1</option>
+      <option value="2">槽 2</option>
+      <option value="3">槽 3</option>
+    </select>
+  </label>
+  <div>
+    <button id="btnSave">存到云</button>
+    <button id="btnLoad">从云读</button>
+  </div>
+
+  <div id="log" class="dim">准备就绪。</div>
+</div>
+
+<script>
+// ============ 1. 令牌存在哪里 ============
+// localStorage 是浏览器给的"本机小仓库"，关掉网页也不会丢。
+// 令牌存在这里，下次打开网页能自动认出你。
+const TOKEN_KEY = "dungeon_token";
+const NAME_KEY  = "dungeon_username";
+
+function getToken() { return localStorage.getItem(TOKEN_KEY) || ""; }
+function setLogin(token, username) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(NAME_KEY, username);
+  showWho();
+}
+function clearLogin() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(NAME_KEY);
+  showWho();
+}
+
+// 把"当前状态"那一行刷新一下
+function showWho() {
+  const token = getToken();
+  const name = localStorage.getItem(NAME_KEY);
+  const el = document.getElementById("who");
+  if (!token) { el.textContent = "未登录"; return; }
+  // 令牌只显示前 8 位，免得整串被别人看去（截图分享的时候）
+  el.textContent = `${name}（令牌 ${token.slice(0, 8)}…）`;
+}
+
+// ============ 2. 带令牌的请求 ============
+// 所有跟服务器要数据的请求都走这个函数：
+// 它会自动把令牌放进请求头 Authorization: Bearer xxxxx，
+// 所以不用在每个按钮里都写一遍。
+async function api(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (options.body !== undefined) headers["content-type"] = "application/json";
+  const token = getToken();
+  if (token) headers["Authorization"] = "Bearer " + token;   // ← 就是这一行在"自动带上"
+  const response = await fetch(path, { ...options, headers });
+  const text = await response.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch { data = { raw: text }; }
+  if (!response.ok) throw new Error(`HTTP ${response.status}：${data.error || text}`);
+  return data;
+}
+
+// ============ 3. 在日志区打印一行 ============
+function log(message, kind = "") {
+  const el = document.getElementById("log");
+  const time = new Date().toTimeString().slice(0, 8);
+  el.innerHTML += `\n<span class="${kind}">[${time}] ${message}</span>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+// 用户名和密码输入框的值
+function creds() {
+  return {
+    username: document.getElementById("username").value.trim(),
+    password: document.getElementById("password").value,
+  };
+}
+
+// ============ 4. 四个按钮 ============
+document.getElementById("btnRegister").onclick = async () => {
+  const { username, password } = creds();
+  log(`注册中：${username} …`);
+  try {
+    const data = await api("/api/register", { method: "POST", body: JSON.stringify({ username, password }) });
+    setLogin(data.token, data.username);
+    log("注册成功，已经自动登录。令牌存进 localStorage 了。", "ok");
+  } catch (error) {
+    log("注册失败：" + error.message, "err");
+  }
+};
+
+document.getElementById("btnLogin").onclick = async () => {
+  const { username, password } = creds();
+  log(`登录中：${username} …`);
+  try {
+    const data = await api("/api/login", { method: "POST", body: JSON.stringify({ username, password }) });
+    setLogin(data.token, data.username);
+    log("登录成功，令牌存进 localStorage 了。", "ok");
+  } catch (error) {
+    log("登录失败：" + error.message, "err");
+  }
+};
+
+document.getElementById("btnForget").onclick = () => {
+  clearLogin();
+  log("已经清掉本机的令牌（服务器那边的令牌还在，重新登录会换一个新的）。", "info");
+};
+
+// 存到云：随便编一个假的游戏状态，用来验证"存进去的是什么、读出来还是什么"
+document.getElementById("btnSave").onclick = async () => {
+  const slot = Number(document.getElementById("slot").value);
+  const state = {
+    level: 3, max_hp: 76, hp: 42, atk: 9, defense: 4,
+    gold: 128, xp: 10, kills: 7, depth: 4,
+    weapon: { kind: "weapon", name: "铁剑", value: 3 },
+    armor: null, bag: [], 存的时间: new Date().toISOString(),
+  };
+  log(`往槽 ${slot} 存…`);
+  try {
+    await api("/api/save", { method: "POST", body: JSON.stringify({ slot, data: state }) });
+    log(`存好了。槽 ${slot} 现在是：等级 ${state.level}、金币 ${state.gold}、第 ${state.depth} 层。`, "ok");
+  } catch (error) {
+    log("存档失败：" + error.message, "err");
+  }
+};
+
+document.getElementById("btnLoad").onclick = async () => {
+  const slot = Number(document.getElementById("slot").value);
+  log(`从槽 ${slot} 读…`);
+  try {
+    const data = await api(`/api/load?slot=${slot}`);
+    if (data.data === null) log(`槽 ${slot} 还是空的（这个账号没往这里存过）。`, "info");
+    else log(`读到了：${JSON.stringify(data.data)}`, "ok");
+  } catch (error) {
+    log("读档失败：" + error.message, "err");
+  }
+};
+
+// 打开页面先刷新一下"当前状态"
+showWho();
+</script>
+</body>
+</html>
