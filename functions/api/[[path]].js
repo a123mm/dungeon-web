@@ -2,6 +2,7 @@
 // 地牢游戏的后端：注册、登录、存档、读档。这一个文件管住所有 /api/... 的网址。
 //
 // 文件名两边的方括号是 Cloudflare 的规矩，意思是"/api/ 底下的任何网址都归我管"。
+// 网页文件（index.html）是另一个文件，由 Pages 自己发，不归它管。
 //
 // 四个接口：
 //   POST /api/register    → 注册
@@ -9,7 +10,7 @@
 //   POST /api/save        → 存档
 //   GET  /api/load?slot=1 → 读档
 //
-// 用之前要先在这个 Cloudflare 项目里加一个 D1 绑定，变量名必须正好是 DB。
+// 用之前要先在这个 Pages 项目里加一个 D1 绑定，变量名必须正好是 DB。
 // ============================================================================
 
 
@@ -246,17 +247,22 @@ async function load(request, env) {
 
 // ============================================================================
 // 四、总入口
-// Cloudflare 每收到一个 /api/... 的请求，都会调用这个函数。
-// 它只做一件事：看网址是什么，交给上面某个函数处理。
+// Cloudflare 每收到一个 /api/... 的请求都会调用这个函数。
+// 网页文件（index.html）由 Pages 自己发出去，不会进这里。
 // ============================================================================
 export async function onRequest({ request, env }) {
   const path = new URL(request.url).pathname;
   const route = request.method + ' ' + path;
+
+  // 数据库还没绑定时说清楚，不然打开网页只会看到一个莫名其妙的 500
+  if (!env.DB) {
+    return json({ error: '数据库还没绑定：去项目的 Settings → Functions → D1 database bindings，加一个，变量名填 DB' }, 500);
+  }
 
   if (route === 'POST /api/register') return register(request, env);
   if (route === 'POST /api/login')    return login(request, env);
   if (route === 'POST /api/save')     return save(request, env);
   if (route === 'GET /api/load')      return load(request, env);
 
-  return json({ error: '没有这个网址：' + route }, 404);
+  return json({ error: '没有这个接口：' + route }, 404);
 }
