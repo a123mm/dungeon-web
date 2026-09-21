@@ -15,6 +15,7 @@
 const END = "\u001b[0m", BOLD = "\u001b[1m", DIM = "\u001b[2m";
 const RED = "\u001b[91m", GREEN = "\u001b[92m", GOLD = "\u001b[93m", BLUE = "\u001b[94m";
 const PURPLE = "\u001b[95m", CYAN = "\u001b[96m", GREY = "\u001b[90m";
+const WHITE = "\u001b[97m";   // 亮白，给「普通」品质的装备用
 
 const BAG_LIMIT = 12;      // 背包上限
 const SAVE_SLOTS = 3;      // 存档槽位数
@@ -53,7 +54,7 @@ function classNameOf(color) {
 const CLASS_OF = {
   "\u001b[0m": null, "\u001b[1m": "bold", "\u001b[2m": "dim",
   "\u001b[91m": "red", "\u001b[92m": "green", "\u001b[93m": "gold", "\u001b[94m": "blue",
-  "\u001b[95m": "purple", "\u001b[96m": "cyan", "\u001b[90m": "grey",
+  "\u001b[95m": "purple", "\u001b[96m": "cyan", "\u001b[90m": "grey", "\u001b[97m": "white",
 };
 
 /**
@@ -100,16 +101,71 @@ const MONSTERS = [                 // 名字, 生命, 攻击, 战利品基数
   ["地牢领主", 60, 16, 40],
 ];
 
+// ===== 稀有度（装备的颜色）=====
+// 普通=白、稀有=蓝、史诗=紫。越稀有，基础数值越高，还多带几条"词条"。
+const RARITIES = {
+  common: { name: "普通", color: "\u001b[97m",  mult: 1.0, affixes: 0 },
+  rare:   { name: "稀有", color: "\u001b[94m",   mult: 1.4, affixes: 1 },
+  epic:   { name: "史诗", color: "\u001b[95m", mult: 1.8, affixes: 2 },
+};
+
+// ===== 词条 =====
+// 装备上除"基础值"以外的额外属性。roll() 是这条词条能摇出多少，unit 是显示时加不加 %。
+const AFFIXES = {
+  atk:   { name: "攻击",   unit: "",  roll: () => 1 + Math.floor(Math.random() * 3) },
+  def:   { name: "防御",   unit: "",  roll: () => 1 + Math.floor(Math.random() * 2) },
+  crit:  { name: "暴击率", unit: "%", roll: () => 5 + Math.floor(Math.random() * 11) },
+  steal: { name: "吸血",   unit: "%", roll: () => 3 + Math.floor(Math.random() * 8) },
+  dodge: { name: "闪避",   unit: "%", roll: () => 3 + Math.floor(Math.random() * 6) },
+};
+const AFFIX_KEYS = Object.keys(AFFIXES);
+
+/** 一条词条写成文字，例：暴击率 +12% */
+function affixText(affix) {
+  const info = AFFIXES[affix.key];
+  return info.name + " +" + affix.value + info.unit;
+}
+
+// ===== 天赋（升级时三选一）=====
+// run 就是"选了以后马上生效"的那点改动；key 记进存档，好在状态栏里列出来。
+const TALENTS = [
+  { key: "hp",    name: "体魄", text: "生命上限 +15",        run: (p) => { p.max_hp += 15; p.hp = Math.min(p.max_hp, p.hp + 15); } },
+  { key: "atk",   name: "力量", text: "攻击 +3",            run: (p) => { p.atk += 3; } },
+  { key: "def",   name: "铁壁", text: "防御 +2",            run: (p) => { p.defense += 2; } },
+  { key: "crit",  name: "致命", text: "暴击率 +15%",        run: (p) => { p.crit += 0.15; } },
+  { key: "steal", name: "吸血", text: "攻击时吸回 10% 伤害", run: (p) => { p.lifesteal += 0.10; } },
+  { key: "dodge", name: "身法", text: "闪避 +10%",          run: (p) => { p.dodge += 0.10; } },
+];
+const TALENT_NAME = {};
+for (const talent of TALENTS) TALENT_NAME[talent.key] = talent.name;
+
 const SAVE_FIELDS = ["level", "max_hp", "hp", "atk", "defense",
-                     "gold", "xp", "kills", "depth", "weapon", "armor", "bag"];
+                     "gold", "xp", "kills", "depth", "weapon", "armor", "bag",
+                     "crit", "lifesteal", "dodge", "talents"];
 
 function newPlayer() {
-  return { level: 1, max_hp: 50, hp: 50, atk: 6, defense: 2,
+  // crit/lifesteal/dodge 都是百分比（0.15 就是 15%）；talents 记着这一局选过哪些天赋
+  return { level: 1, max_hp: 50, hp: 50, atk: 6, defense: 2, crit: 0.15,
+           lifesteal: 0, dodge: 0, talents: [],
            gold: 0, xp: 0, kills: 0, depth: 1, weapon: null, armor: null, bag: [] };
 }
 
-const attackOf = (p) => p.atk + (p.weapon ? p.weapon.value : 0);
-const guardOf = (p) => p.defense + (p.armor ? p.armor.value : 0);
+/** 武器和护甲上同一种词条加起来有多少。（老存档的装备没有 affixes，跳过就行） */
+function gearBonus(player, key) {
+  let total = 0;
+  for (const item of [player.weapon, player.armor]) {
+    if (!item || !item.affixes) continue;
+    for (const affix of item.affixes) if (affix.key === key) total += affix.value;
+  }
+  return total;
+}
+
+const attackOf = (p) => p.atk + (p.weapon ? p.weapon.value : 0) + gearBonus(p, "atk");
+const guardOf = (p) => p.defense + (p.armor ? p.armor.value : 0) + gearBonus(p, "def");
+// 暴击、吸血、闪避：天赋加的 + 装备词条加的（词条存的是整数，例如 12 表示 12%）
+const critOf = (p) => p.crit + gearBonus(p, "crit") / 100;
+const stealOf = (p) => p.lifesteal + gearBonus(p, "steal") / 100;
+const dodgeOf = (p) => p.dodge + gearBonus(p, "dodge") / 100;
 const xpNeeded = (level) => level * 20;
 const pickOne = (list) => list[Math.floor(Math.random() * list.length)];
 
@@ -184,9 +240,6 @@ function quitGame() {
   waiting.reject(new QuitGame("注销"));
 }
 
-/** 一排「1 前进 2 背包 …」的按钮，省得每次手写。 */
-const numbered = (pairs) => pairs.map(([key, label], i) => ({ key: String(i + 1), label }));
-
 const CHOICES_ADVENTURE = [
   { key: "1", label: "前进" }, { key: "2", label: "背包" },
   { key: "3", label: "休息" }, { key: "4", label: "离开地牢" },
@@ -202,7 +255,11 @@ const CHOICES_AGAIN = [{ key: "1", label: "再来一局" }];
 
 // ===== 五、怪物和物品 =====
 
-function spawn(depth) {
+/**
+ * 造一只怪物。boss=true 表示这是第 5/10/15… 层那只守关首领。
+ * （首领不是随机碰上的，是每 5 层固定站在楼梯口等你。）
+ */
+function spawn(depth, boss) {
   // 最强怪物（地牢领主）从第 8 层才进池子——第 5 层不该撞上它
   const pool = MONSTERS.slice(0, Math.min(MONSTERS.length, 2 + Math.floor(depth / 2)));
   const [name, hp, atk, reward] = pickOne(pool);
@@ -216,22 +273,55 @@ function spawn(depth) {
     xp: Math.floor(reward * grow),
     gold: Math.floor(reward * grow),
   };
-  if (depth % 5 === 0 && Math.random() < 0.22) {
+  if (boss) {
     monster.name = "首领·" + name;
     monster.boss = true;
-    const boost = 1.10 + 0.015 * depth;         // 第 5 层 ×1.18，第 15 层 ×1.33
+    const boost = 1.5 + 0.03 * depth;        // 血厚：第 5 层 ×1.65，第 15 层 ×1.95
     for (const key of ["max_hp", "hp", "xp", "gold"]) monster[key] = Math.floor(monster[key] * boost);
-    monster.atk = Math.floor(monster.atk * (1 + 0.005 * depth));   // 攻击涨得更慢
+    monster.atk = Math.floor(monster.atk * (1.2 + 0.01 * depth));   // 攻击也凶，但没血涨得多
   }
   return monster;
 }
 
-function randomItem(depth, gear) {
+/** 摇一个品质。层数越深，越容易出蓝的和紫的。 */
+function rollRarity(depth) {
+  const roll = Math.random();
+  const epic = Math.min(0.30, 0.03 + depth * 0.02);      // 第 15 层约三成
+  const rare = Math.min(0.45, 0.15 + depth * 0.02);
+  if (roll < epic) return "epic";
+  if (roll < epic + rare) return "rare";
+  return "common";
+}
+
+/** 按品质抽词条（同一种词条不会重复出现两次）。 */
+function rollAffixes(rarity) {
+  const pool = AFFIX_KEYS.slice();
+  const picked = [];
+  for (let i = 0; i < RARITIES[rarity].affixes && pool.length; i++) {
+    const key = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
+    picked.push({ key: key, value: AFFIXES[key].roll() });
+  }
+  return picked;
+}
+
+/**
+ * 造一件东西。
+ * gear=false 是药水（药水不分品质）；gear=true 是装备，会带品质和词条。
+ * forcedRarity 传 "epic" 就是"这一件必定是史诗"（首领掉落用得上）。
+ */
+function randomItem(depth, gear, forcedRarity) {
   if (gear) {
     const isWeapon = Math.random() < 0.5;
     const table = isWeapon ? WEAPONS : ARMORS;
-    const [name, value] = pickOne(table.slice(0, Math.min(table.length, 1 + Math.floor(depth / 3))));
-    return { kind: isWeapon ? "weapon" : "armor", name: name, value: value };
+    const [name, base] = pickOne(table.slice(0, Math.min(table.length, 1 + Math.floor(depth / 3))));
+    const rarity = forcedRarity || rollRarity(depth);
+    return {
+      kind: isWeapon ? "weapon" : "armor",
+      name: name,
+      rarity: rarity,
+      value: Math.max(base, Math.round(base * RARITIES[rarity].mult)),   // 品质还会把基础值拉高一点
+      affixes: rollAffixes(rarity),
+    };
   }
   const [name, value] = pickOne(POTIONS.slice(0, Math.min(POTIONS.length, 1 + Math.floor(depth / 4))));
   return { kind: "potion", name: name, value: value };
@@ -240,18 +330,37 @@ function randomItem(depth, gear) {
 
 // ===== 六、画面 =====
 
+/**
+ * 天赋那一行：把选过的天赋列出来（选过两个就写"力量×2"），
+ * 后面再跟上暴击/吸血/闪避的总数——这三个是看不见摸不着的，写出来才看得见成长。
+ */
+function talentRow(player) {
+  const tally = {};
+  for (const key of player.talents) tally[key] = (tally[key] || 0) + 1;
+  // 暴击/吸血/闪避在下面单独按百分比写出来，这里就不再重复列名字了
+  const asPercent = { crit: 1, steal: 1, dodge: 1 };
+  const parts = Object.keys(tally)
+    .filter((key) => !asPercent[key])
+    .map((key) => (TALENT_NAME[key] || key) + (tally[key] > 1 ? "×" + tally[key] : ""));
+  if (critOf(player) > 0.15) parts.push("暴击 " + Math.round(critOf(player) * 100) + "%");
+  if (stealOf(player) > 0) parts.push("吸血 " + Math.round(stealOf(player) * 100) + "%");
+  if (dodgeOf(player) > 0) parts.push("闪避 " + Math.round(dodgeOf(player) * 100) + "%");
+  return "天赋 " + (parts.length ? GREEN + parts.join("  ") + END : GREY + "升级时三选一" + END);
+}
+
 function statusRows(player) {
   const weapon = player.weapon
-    ? GREEN + player.weapon.name + " +" + player.weapon.value + END
+    ? itemName(player.weapon) + GOLD + " +" + player.weapon.value + END
     : GREY + "空手" + END;
   const armor = player.armor
-    ? GREEN + player.armor.name + " +" + player.armor.value + END
+    ? itemName(player.armor) + GOLD + " +" + player.armor.value + END
     : GREY + "布衣" + END;
   return [
     "生命 " + bar(player.hp, player.max_hp, 20, RED) + "  金币 " + GOLD + player.gold + END,
     "等级 " + BOLD + player.level + END + "   攻击 " + attackOf(player) + "   防御 " + guardOf(player),
     "经验 " + bar(player.xp, xpNeeded(player.level), 20, CYAN),
     "武器 " + weapon + "   护甲 " + armor,
+    talentRow(player),
   ];
 }
 
@@ -275,26 +384,45 @@ function renderCombat(player, monster, log) {
   show(rows, PURPLE);
 }
 
-function itemLine(player, item) {
-  if (item.kind === "potion") return GREEN + item.name + END + "  " + GREY + "回复 " + item.value + " 点生命" + END;
-  if (item.kind === "weapon") {
-    const tag = player.weapon === item ? "  " + CYAN + "已装备" + END : "";
-    return GREEN + item.name + END + "  +" + item.value + " 攻击" + tag;
+/** 装备的名字，按品质上色：普通=白、稀有=蓝、史诗=紫。例：史诗精灵匕首 */
+function itemName(item) {
+  const info = RARITIES[item.rarity] || RARITIES.common;
+  return info.color + info.name + item.name + END;
+}
+
+/**
+ * 背包和商店里，一件东西占的行。
+ * 药水占一行；装备占两行（第一行名字+基础值，第二行是词条），这样手机上不会挤成一坨。
+ */
+function itemRows(player, item) {
+  if (item.kind === "potion") {
+    return [GREEN + item.name + END + "  " + GREY + "回复 " + item.value + " 点生命" + END];
   }
-  const tag = player.armor === item ? "  " + CYAN + "已装备" + END : "";
-  return GREEN + item.name + END + "  +" + item.value + " 防御" + tag;
+  const slot = item.kind === "weapon" ? "攻击" : "防御";
+  const equipped = item.kind === "weapon" ? player.weapon === item : player.armor === item;
+  const tag = equipped ? "  " + CYAN + "已装备" + END : "";
+  const rows = [itemName(item) + "  " + GOLD + "+" + item.value + END + " " + slot + tag];
+  if (item.affixes && item.affixes.length) {
+    rows.push("    " + CYAN + item.affixes.map(affixText).join("  ") + END);
+  }
+  return rows;
 }
 
 async function renderBag(player, log) {
   const rows = [BOLD + "背包" + END + "   " + GREY + player.bag.length + "/" + BAG_LIMIT + END, SEP];
   if (player.bag.length) {
-    player.bag.forEach((item, i) => rows.push("[" + (i + 1) + "] " + itemLine(player, item)));
+    player.bag.forEach((item, i) => {
+      const lines = itemRows(player, item);
+      rows.push("[" + (i + 1) + "] " + lines[0]);
+      for (const line of lines.slice(1)) rows.push(line);
+    });
   } else {
     rows.push(GREY + "空空如也。" + END);
   }
   rows.push(SEP);
   show(rows, GREEN);
-  const choices = numbered(player.bag.map((item) => [null, item.name]));
+  // 按钮上带编号，跟上面列表对得上号（同名的两件也能分清是哪一个）
+  const choices = player.bag.map((item, i) => ({ key: String(i + 1), label: (i + 1) + " " + item.name }));
   choices.push({ key: "0", label: "返回" });
   return await ask(choices);
 }
@@ -312,7 +440,7 @@ function damageOf(attack, defense) {
   return Math.max(1, attack + (Math.floor(Math.random() * 5) - 2) - defense);
 }
 
-function gainXp(player, amount, log) {
+async function gainXp(player, amount, log) {
   player.xp += amount;
   add(log, CYAN + "经验 +" + amount + END);
   while (player.xp >= xpNeeded(player.level)) {
@@ -325,23 +453,73 @@ function gainXp(player, amount, log) {
     add(log, GOLD + BOLD + "升级！" + END + GOLD + " 你现在是 " + player.level +
              " 级（生命 +14，攻击 +2，防御 +1）。" + END);
     pause(0.8);
+    await chooseTalent(player, log);
   }
 }
 
-function victory(player, monster, log) {
+/**
+ * 升级时弹出「三选一」：随机抽 3 个天赋摆在按钮上，必须点一个才能继续。
+ * 选完立刻生效，并把 key 记进 player.talents（状态栏那一行就是它）。
+ */
+async function chooseTalent(player, log) {
+  const pool = TALENTS.slice();
+  const picks = [];
+  while (picks.length < 3 && pool.length) {
+    picks.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  }
+  const rows = [
+    BOLD + GOLD + "天赋觉醒！" + END + GREY + "  选一个，这一局永久生效" + END, SEP,
+    "你现在是 " + BOLD + player.level + END + " 级，挑一样带走：",
+    SEP,
+  ];
+  picks.forEach((talent, i) => rows.push("[" + (i + 1) + "] " + GOLD + BOLD + talent.name + END + "   " + talent.text));
+  show(rows, GOLD);
+
+  const choices = picks.map((talent, i) => ({ key: String(i + 1), label: talent.name + "：" + talent.text }));
+  const choice = await ask(choices);
+  const chosen = picks[Number(choice) - 1];
+  chosen.run(player);
+  player.talents.push(chosen.key);
+  add(log, GOLD + "天赋「" + chosen.name + "」——" + chosen.text + END);
+  pause(0.6);
+}
+
+async function victory(player, monster, log) {
   player.kills += 1;
   player.gold += monster.gold;
   add(log, GOLD + "你击败了 " + monster.name + "，拾到 " + monster.gold + " 枚金币。" + END);
   pause(0.6);
-  if (Math.random() < 0.28) {
+
+  if (monster.boss) {
+    // 首领必定掉一件史诗装备——这是每 5 层最值得期待的东西
+    add(log, PURPLE + BOLD + "首领轰然倒地，整层地牢都在震——它的宝库归你了！" + END);
+    pause(0.9);
+    const loot = randomItem(player.depth, true, "epic");
+    if (player.bag.length >= BAG_LIMIT) makeRoom(player, log);   // 首领的东西不能因为背包满就丢了
+    player.bag.push(loot);
+    add(log, PURPLE + "你夺走了 " + itemName(loot) + "！" + END);
+    pause(0.8);
+  } else if (Math.random() < 0.28) {
     const item = randomItem(player.depth, Math.random() < 0.45);
     if (player.bag.length < BAG_LIMIT) {
       player.bag.push(item);
-      add(log, GREEN + "它还掉落了 " + item.name + "！" + END);
+      add(log, GREEN + "它还掉落了 " + itemName(item) + "！" + END);
       pause(0.7);
     }
   }
-  gainXp(player, monster.xp, log);
+  await gainXp(player, monster.xp, log);
+}
+
+/** 背包满了：丢掉一件最不值钱的装备，腾个格子出来。 */
+function makeRoom(player, log) {
+  let worst = -1;
+  player.bag.forEach((item, i) => {
+    if (item.kind === "potion") return;      // 药水留着，先扔装备
+    if (worst < 0 || item.value < player.bag[worst].value) worst = i;
+  });
+  if (worst < 0) return;
+  const gone = player.bag.splice(worst, 1)[0];
+  add(log, GREY + "背包满了，" + gone.name + " 被挤掉了。" + END);
 }
 
 function playerStrike(player, monster, log, heavy) {
@@ -356,18 +534,47 @@ function playerStrike(player, monster, log, heavy) {
     add(log, BOLD + "重击！" + END + " " + PURPLE + monster.name + END + " 受到 " +
              GOLD + damage + END + " 点伤害。");
   } else {
-    // 普通攻击有一成半的机会打出双倍伤害
-    const crit = Math.random() < 0.15;
+    // 普通攻击按"暴击率"决定会不会打出双倍伤害（天赋和装备词条能把它堆起来）
+    const crit = Math.random() < critOf(player);
     const mark = crit ? GOLD + "暴击！" + END + " " : "";
     damage = damageOf(attackOf(player) * (crit ? 2 : 1), 0);
     add(log, mark + "你击中 " + PURPLE + monster.name + END + "，造成 " + GOLD + damage + END + " 点伤害。");
   }
   monster.hp -= damage;
+  // 吸血：打出去多少伤害，就按比例回自己一点血
+  const stole = Math.floor(damage * stealOf(player));
+  if (stole > 0) {
+    const gained = heal(player, stole);
+    if (gained > 0) add(log, GREEN + "吸血：你夺回 " + gained + " 点生命。" + END);
+  }
   pause(0.45);
   return monster.hp <= 0;
 }
 
-function monsterStrike(player, monster, log) {
+/**
+ * 怪物出手。round 是这一场打到了第几回合（首领每 3 回合放一次绝招）。
+ * 出手前先按"闪避"判定，闪开了就一点伤害都不吃。
+ */
+function monsterStrike(player, monster, log, round) {
+  if (Math.random() < dodgeOf(player)) {
+    add(log, CYAN + "你侧身一闪，" + monster.name + " 扑了个空。" + END);
+    pause(0.4);
+    return;
+  }
+  if (monster.boss && round % 3 === 0) {
+    // 首领的绝招：一半概率是双倍重击，一半概率是吼一声回血
+    if (Math.random() < 0.5) {
+      const hurt = damageOf(monster.atk * 2, guardOf(player));
+      player.hp -= hurt;
+      add(log, RED + BOLD + monster.name + " 高举双臂砸下——绝招！你受到 " + hurt + " 点伤害。" + END);
+    } else {
+      const healed = Math.min(monster.max_hp - monster.hp, Math.floor(monster.max_hp * 0.15));
+      monster.hp += healed;
+      add(log, RED + monster.name + " 仰头咆哮，伤口飞快愈合，回复 " + healed + " 点生命。" + END);
+    }
+    pause(0.6);
+    return;
+  }
   const damage = damageOf(monster.atk, guardOf(player));
   player.hp -= damage;
   add(log, RED + monster.name + " 攻来，你受到 " + damage + " 点伤害。" + END);
@@ -407,6 +614,7 @@ async function fight(player, monster, log) {
   }
   add(log, PURPLE + monster.name + " 挡住了去路！" + END);
   pause(0.6);
+  let round = 0;                 // 打到第几回合（首领每 3 回合放绝招）
   while (player.hp > 0) {
     renderCombat(player, monster, log);
     const choice = await ask(CHOICES_COMBAT);
@@ -421,11 +629,14 @@ async function fight(player, monster, log) {
       }
       add(log, RED + "逃跑失败！" + END);
     } else if (choice === "1") {
-      if (playerStrike(player, monster, log, false)) { victory(player, monster, log); return; }
+      if (playerStrike(player, monster, log, false)) { await victory(player, monster, log); return; }
     } else {
-      if (playerStrike(player, monster, log, true)) { victory(player, monster, log); return; }
+      if (playerStrike(player, monster, log, true)) { await victory(player, monster, log); return; }
     }
-    if (player.hp > 0) monsterStrike(player, monster, log);
+    if (player.hp > 0) {
+      round += 1;
+      monsterStrike(player, monster, log, round);
+    }
   }
 }
 
@@ -439,6 +650,8 @@ async function bossWarning(player, monster) {
     "你的 生命 " + player.hp + "/" + player.max_hp + "   攻击 " + attackOf(player) +
       "   防御 " + guardOf(player),
     SEP,
+    RED + "它每 3 回合放一次绝招：双倍重击，或者自己回血。" + END,
+    PURPLE + "打赢它，必定掉一件史诗装备。" + END,
     GREY + "打不过可以先撤，补血换装备再下来。" + END,
   ];
   show(rows, RED);
@@ -531,7 +744,9 @@ async function shop(player, log) {
     const rows = [BOLD + "流浪商人" + END + "   " + GREY + "你有 " + player.gold + " 金币" + END, SEP];
     stock.forEach((item, i) => {
       const color = player.gold >= item.price ? GOLD : RED;
-      rows.push("[" + (i + 1) + "] " + itemLine(player, item) + "   " + color + item.price + " 金" + END);
+      const lines = itemRows(player, item);
+      rows.push("[" + (i + 1) + "] " + lines[0] + "   " + color + item.price + " 金" + END);
+      for (const line of lines.slice(1)) rows.push(line);
     });
     rows.push(SEP, "[H] 花 " + healPrice(player) + " 金把血回满");
     if (notice) rows.push(notice);
@@ -585,6 +800,11 @@ async function advance(player, log) {
   player.depth += 1;
   add(log, "你沿着石阶下到第 " + player.depth + " 层。");
   pause(0.4);
+  // 第 5、10、15… 层是固定首领，不掷骰子，它就在楼梯口等着
+  if (player.depth % 5 === 0) {
+    await fight(player, spawn(player.depth, true), log);
+    return;
+  }
   const roll = Math.random();
   if (roll < 0.50) await fight(player, spawn(player.depth), log);
   else if (roll < 0.66) await chest(player, log);
