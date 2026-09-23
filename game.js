@@ -213,6 +213,49 @@ function show(rows, color = CYAN) {
   board.innerHTML = html + "</div>";
 }
 
+
+// ===== 打击感特效：飘伤害数字、闪屏（纯视觉，没有任何声音）=====
+const RAINBOW_COLORS = [RED, GOLD, GREEN, CYAN, BLUE, PURPLE];
+
+/** 把一小段字涂成彩虹色，给「★极品」这类提示用。每个字单独上色，不一层套一层。 */
+function rainbow(text) {
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    out += RAINBOW_COLORS[i % RAINBOW_COLORS.length] + text[i] + END;
+  }
+  return out;
+}
+
+/** 拿到特效层。真浏览器里有这个 <div>，模拟环境里没有，拿不到就什么都不做。 */
+function fxLayer() {
+  const el = document.getElementById("fx");
+  return el && el.appendChild ? el : null;
+}
+
+/** 怪物头顶飘一个伤害数字；暴击的字更大更黄。位置按百分比，大致落在屏幕顶上的怪物区。 */
+function floatDamage(text, crit) {
+  const layer = fxLayer();
+  if (!layer) return;
+  const el = document.createElement("span");
+  el.className = "float-dmg" + (crit ? " crit" : "");
+  el.textContent = text;
+  el.style.left = (25 + Math.random() * 45) + "%";
+  el.style.top = (10 + Math.random() * 7) + "%";
+  layer.appendChild(el);
+  setTimeout(() => el.remove(), 950);   // 飘 0.95 秒后自己消失
+}
+
+/** 屏幕边缘闪一下：red=挨打、gold=暴击、white=升级/爆极品（白光是整屏盖过去）。 */
+function flash(kind) {
+  const layer = fxLayer();
+  if (!layer) return;
+  const el = document.createElement("div");
+  el.className = "flash " + kind;
+  layer.appendChild(el);
+  setTimeout(() => el.remove(), 450);
+}
+
+
 /**
  * 点「注销」时抛出的信号。它会一层层穿过所有 await，直接结束这一局。
  * 不这么做的话，游戏会永远卡在"等按钮"那一步；重新登录后会同时跑两份。
@@ -458,7 +501,18 @@ function itemName(item) {
 
 /** 摇到接近满值的装备标一颗星，一眼能看出来这件比同类好。 */
 function qualityTag(item) {
-  return item.perfect ? "  " + GOLD + BOLD + "★极品" + END : "";
+  return item.perfect ? "  " + rainbow("★极品") : "";
+}
+
+/** 跟身上同部位的装备比一比：好就写 +2攻击（绿），差就写 -1攻击（红），没穿就不写。 */
+function compareTag(player, item) {
+  const equipped = item.kind === "weapon" ? player.weapon : player.armor;
+  if (!equipped || equipped === item) return "";
+  const diff = item.value - equipped.value;
+  const stat = item.kind === "weapon" ? "攻击" : "防御";
+  if (diff > 0) return "  " + GREEN + "+" + diff + stat + END;
+  if (diff < 0) return "  " + RED + diff + stat + END;
+  return "  " + GREY + "持平" + END;
 }
 
 /**
@@ -493,7 +547,7 @@ function itemRows(player, item) {
   const equipped = item.kind === "weapon" ? player.weapon === item : player.armor === item;
   const tag = equipped ? "  " + CYAN + "已装备" + END : "";
   const rows = [itemName(item) + "  " + GOLD + "+" + item.value + END + " " + slot +
-                qualityTag(item) + tag + durabilityText(item)];
+                qualityTag(item) + tag + compareTag(player, item) + durabilityText(item)];
   if (item.affixes && item.affixes.length) {
     rows.push("    " + CYAN + item.affixes.map(affixText).join("  ") + END);
   }
@@ -515,6 +569,7 @@ async function renderBag(player, log) {
   show(rows, GREEN);
   // 按钮上带编号，跟上面列表对得上号（同名的两件也能分清是哪一个）
   const choices = player.bag.map((item, i) => ({ key: String(i + 1), label: (i + 1) + " " + item.name }));
+  if (player.bag.length) choices.push({ key: "D", label: "丢弃" });
   choices.push({ key: "0", label: "返回" });
   return await ask(choices);
 }
@@ -544,6 +599,7 @@ async function gainXp(player, amount, log) {
     player.defense += 1;
     add(log, GOLD + BOLD + "升级！" + END + GOLD + " 你现在是 " + player.level +
              " 级（生命 +14，攻击 +2，防御 +1）。" + END);
+    flash("white");                  // 升级全屏白光一闪
     pause(0.8);
     await chooseTalent(player, log);
   }
@@ -590,6 +646,7 @@ async function victory(player, monster, log) {
     if (player.bag.length >= BAG_LIMIT) makeRoom(player, log);   // 首领的东西不能因为背包满就丢了
     player.bag.push(loot);
     add(log, lootColor(loot) + "你夺走了 " + itemName(loot) + qualityTag(loot) + "！" + END);
+    if (loot.perfect) flash("white");   // 爆出极品，全屏白光一闪
     pause(0.8);
   } else if (monster.mutant) {
     // 变异怪不掉药水，只掉装备，而且至少是蓝的
@@ -597,6 +654,7 @@ async function victory(player, monster, log) {
     if (player.bag.length < BAG_LIMIT) {
       player.bag.push(loot);
       add(log, GOLD + "变异怪爆了一地东西：" + itemName(loot) + qualityTag(loot) + "！" + END);
+      if (loot.perfect) flash("white");
       pause(0.8);
     }
   } else if (Math.random() < 0.28) {
@@ -604,6 +662,7 @@ async function victory(player, monster, log) {
     if (player.bag.length < BAG_LIMIT) {
       player.bag.push(item);
       add(log, GREEN + "它还掉落了 " + itemName(item) + "！" + END);
+      if (item.perfect) flash("white");
       pause(0.7);
     }
   }
@@ -630,6 +689,7 @@ function playerStrike(player, monster, log, heavy) {
     return false;
   }
   let damage;
+  let crit = false;
   if (heavy) {
     if (Math.random() < 0.35) {
       add(log, GREY + "你蓄力劈下，却被闪开了。" + END);
@@ -641,12 +701,14 @@ function playerStrike(player, monster, log, heavy) {
              GOLD + damage + END + " 点伤害。");
   } else {
     // 普通攻击按"暴击率"决定会不会打出双倍伤害（天赋和装备词条能把它堆起来）
-    const crit = Math.random() < critOf(player);
+    crit = Math.random() < critOf(player);
     const mark = crit ? GOLD + "暴击！" + END + " " : "";
     damage = damageOf(attackOf(player) * (crit ? 2 : 1), 0);
     add(log, mark + "你击中 " + PURPLE + monster.name + END + "，造成 " + GOLD + damage + END + " 点伤害。");
   }
   monster.hp -= damage;
+  floatDamage("-" + damage, crit);   // 怪物头顶飘出伤害数字
+  if (crit) flash("gold");           // 暴击时屏幕边缘闪一圈金边
   // 吸血：打出去多少伤害，就按比例回自己一点血
   const stole = Math.floor(damage * stealOf(player));
   if (stole > 0) {
@@ -666,6 +728,7 @@ function monsterStrike(player, monster, log, round) {
   if (monster.boom && monster.hp <= monster.max_hp * 0.3) {
     const hurt = damageOf(monster.atk * 2.5, guardOf(player));
     player.hp -= hurt;
+    flash("red");                    // 自爆把你炸伤了，屏幕边闪一下红
     monster.hp = 0;
     add(log, RED + BOLD + monster.name + " 全身发白，嘶嘶作响——轰！它炸成了碎片，你受到 " + hurt + " 点伤害。" + END);
     pause(0.8);
@@ -681,6 +744,7 @@ function monsterStrike(player, monster, log, round) {
     if (Math.random() < 0.5) {
       const hurt = damageOf(monster.atk * 2, guardOf(player));
       player.hp -= hurt;
+      flash("red");                  // 首领绝招砸中你，屏幕边闪一下红
       add(log, RED + BOLD + monster.name + " 高举双臂砸下——绝招！你受到 " + hurt + " 点伤害。" + END);
     } else {
       const healed = Math.min(monster.max_hp - monster.hp, Math.floor(monster.max_hp * 0.15));
@@ -693,6 +757,7 @@ function monsterStrike(player, monster, log, round) {
   // 幽灵是虚体，你的防御对它没用
   const damage = damageOf(monster.atk, monster.pierce ? 0 : guardOf(player));
   player.hp -= damage;
+  flash("red");                      // 挨打了，屏幕边闪一下红
   if (monster.pierce) add(log, RED + monster.name + " 穿过你的护甲，你受到 " + damage + " 点伤害。" + END);
   else add(log, RED + monster.name + " 攻来，你受到 " + damage + " 点伤害。" + END);
   pause(0.45);
@@ -728,8 +793,32 @@ async function openBag(player, log) {
   while (true) {
     const choice = await renderBag(player, log);
     if (choice === "0") return;
+    if (choice === "D") {
+      await discardFromBag(player, log);   // 丢弃模式：再点一次编号就扔
+      continue;
+    }
     await useItem(player, Number(choice) - 1, log);
   }
+}
+
+/** 丢弃模式：列出编号，点哪个扔哪个，装备和药水都能扔。 */
+async function discardFromBag(player, log) {
+  if (!player.bag.length) return;
+  const rows = [BOLD + RED + "丢弃哪件？" + END + "   " + GREY + "点编号就扔掉，点「返回」就留下" + END, SEP];
+  player.bag.forEach((item, i) => {
+    const lines = itemRows(player, item);
+    rows.push("[" + (i + 1) + "] " + lines[0]);
+    for (const line of lines.slice(1)) rows.push(line);
+  });
+  rows.push(SEP);
+  show(rows, RED);
+  const choices = player.bag.map((item, i) => ({ key: String(i + 1), label: (i + 1) + " " + item.name }));
+  choices.push({ key: "0", label: "返回" });
+  const choice = await ask(choices);
+  if (choice === "0") return;
+  const gone = player.bag.splice(Number(choice) - 1, 1)[0];
+  add(log, GREY + "你把 " + gone.name + " 丢掉了。" + END);
+  pause(0.3);
 }
 
 /**
@@ -811,6 +900,7 @@ async function chest(player, log) {
   if (roll < 0.45) {
     item = randomItem(player.depth, true);
     add(log, GREEN + "获得装备：" + itemName(item) + "（+" + item.value + "）" + qualityTag(item) + END);
+    if (item.perfect) flash("white");
   } else if (roll < 0.75) {
     const coins = (10 + Math.floor(Math.random() * 11)) * player.depth;
     player.gold += coins;
