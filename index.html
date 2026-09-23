@@ -90,6 +90,24 @@
   /* 按钮区：自动排成几列，够大，手指点着准 */
   #buttons { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; }
   #buttons button { padding: 14px 8px; }
+
+  /* ---------- 打击感特效：飘伤害数字、闪屏（纯视觉，没声音） ---------- */
+  #fx { position: fixed; inset: 0; pointer-events: none; z-index: 5; overflow: hidden; }
+  .float-dmg {
+    position: absolute; font-weight: 700; white-space: nowrap;
+    animation: floatUp 0.9s ease-out forwards;
+  }
+  .float-dmg.normal { font-size: 20px; color: #ff9d9d; text-shadow: 0 1px 3px #000; }
+  .float-dmg.crit   { font-size: 32px; color: #ffd479; text-shadow: 0 0 9px #ffb000; }
+  @keyframes floatUp {
+    from { transform: translateY(0); opacity: 1; }
+    to   { transform: translateY(-48px); opacity: 0; }
+  }
+  .flash { position: absolute; inset: 0; animation: flashFade 0.45s ease-out forwards; }
+  .flash.red   { box-shadow: inset 0 0 0 4px #ff5050, inset 0 0 70px rgba(255, 45, 45, 0.55); }
+  .flash.gold  { box-shadow: inset 0 0 0 4px #ffd479, inset 0 0 70px rgba(255, 180, 0, 0.55); }
+  .flash.white { background: rgba(255, 255, 255, 0.9); }
+  @keyframes flashFade { from { opacity: 1; } to { opacity: 0; } }
 </style>
 </head>
 <body>
@@ -126,6 +144,7 @@
   </div>
   <div id="board"></div>
   <div id="buttons"></div>
+  <div id="fx"></div>
 </div>
 
 <!-- 游戏的规则和画面都在 game.js 里；它要先用上面的 #board 和 #buttons，所以放后面 -->
