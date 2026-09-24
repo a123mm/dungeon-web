@@ -85,7 +85,36 @@
     display: inline-block; height: 0.85em; background: #0d2415;
     border: 1px solid #24503a; border-radius: 2px; vertical-align: -0.05em;
   }
-  .bar i { display: block; height: 100%; background: currentColor; border-radius: 1px; }
+  .bar i {
+    display: block; height: 100%; background: currentColor; border-radius: 1px;
+    position: relative; overflow: hidden;
+  }
+  /* 血条上扫过去的流光。用 transform 动，不动宽度，手机上省电一些 */
+  .bar i::after {
+    content: ""; position: absolute; top: 0; bottom: 0; width: 45%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+    animation: barFlow 1.9s linear infinite;
+  }
+  @keyframes barFlow {
+    from { transform: translateX(-140%); }
+    to   { transform: translateX(340%); }
+  }
+
+  /* 装备按品质发光：紫装常亮，金装流光（纯视觉，没有声音）。
+     只有极品的紫/金装才用得上动画，所以同一屏里最多闪一两条，不卡。 */
+  .gear { display: inline-block; padding: 0 4px; border-radius: 4px; }
+  .gear.epic { text-shadow: 0 0 7px rgba(199, 155, 255, 0.8); }
+  .gear.legendary {
+    text-shadow: 0 0 9px rgba(255, 212, 121, 0.9);
+    background: linear-gradient(100deg,
+      rgba(255, 212, 121, 0) 20%, rgba(255, 212, 121, 0.24) 50%, rgba(255, 212, 121, 0) 80%);
+    background-size: 250% 100%;
+    animation: gearShine 1.8s linear infinite;
+  }
+  @keyframes gearShine {
+    from { background-position: 250% 0; }
+    to   { background-position: -150% 0; }
+  }
 
   /* 按钮区：自动排成几列，够大，手指点着准 */
   #buttons { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; }
