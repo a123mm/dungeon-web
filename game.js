@@ -155,19 +155,119 @@ const TALENTS = [
   { key: "crit",  name: "致命", text: "暴击率 +15%",        run: (p) => { p.crit += 0.15; } },
   { key: "steal", name: "吸血", text: "攻击时吸回 10% 伤害", run: (p) => { p.lifesteal += 0.10; } },
   { key: "dodge", name: "身法", text: "闪避 +10%",          run: (p) => { p.dodge += 0.10; } },
+  // 下面六个带 cls 的是职业专属：只有本职业升级抽天赋时才会看到
+  { key: "guard",  name: "重甲",     cls: "warrior", text: "防御 +3",            run: (p) => { p.defense += 3; } },
+  { key: "vigor",  name: "不屈",     cls: "warrior", text: "生命上限 +25",       run: (p) => { p.max_hp += 25; p.hp = Math.min(p.max_hp, p.hp + 25); } },
+  { key: "shadow", name: "影袭",     cls: "rogue",   text: "闪避 +15%",          run: (p) => { p.dodge += 0.15; } },
+  { key: "deadly", name: "致命一击", cls: "rogue",   text: "暴击率 +20%",        run: (p) => { p.crit += 0.20; } },
+  { key: "arcane", name: "奥术",     cls: "mage",    text: "攻击 +5",            run: (p) => { p.atk += 5; } },
+  { key: "drain",  name: "汲取",     cls: "mage",    text: "吸血 +15%",          run: (p) => { p.lifesteal += 0.15; } },
 ];
 const TALENT_NAME = {};
 for (const talent of TALENTS) TALENT_NAME[talent.key] = talent.name;
 
+
+// ===== 职业（开局三选一）=====
+// 一个职业决定四件事：
+//   max_hp/atk/defense/crit/dodge  开局的底子
+//   growth   每升一级各涨多少（战士越打越肉，法师越打越疼）
+//   start    开局白送的装备
+//   cls      专属天赋（写在 TALENTS 里，标了 cls 的那几个）
+//
+// 「冒险者」不是能选的职业，是给老存档用的：以前存的档没有 cls 这个字段，
+// 读进来就当成冒险者，底子数值和成长速度跟改版前完全一样，不会把老档弄坏。
+const CLASSES = {
+  classic: {
+    name: "冒险者", tag: "老存档", color: GREY,
+    max_hp: 50, atk: 6, defense: 2, crit: 0.15, dodge: 0,
+    growth: { hp: 14, atk: 2, def: 1 },
+    start: {},
+  },
+  warrior: {
+    name: "战士", tag: "高血高防", color: RED,
+    max_hp: 58, atk: 6, defense: 3, crit: 0.08, dodge: 0,
+    growth: { hp: 18, atk: 1, def: 2 },
+    start: { weapon: ["铁剑", 3], armor: ["皮甲", 2] },
+  },
+  rogue: {
+    name: "刺客", tag: "高暴击高闪避", color: PURPLE,
+    max_hp: 42, atk: 6, defense: 2, crit: 0.35, dodge: 0.15,
+    growth: { hp: 10, atk: 3, def: 1 },
+    start: { weapon: ["精灵匕首", 5] },
+  },
+  mage: {
+    name: "法师", tag: "高攻低血", color: BLUE,
+    max_hp: 38, atk: 11, defense: 1, crit: 0.12, dodge: 0.05,
+    growth: { hp: 8, atk: 3, def: 0 },
+    start: { weapon: ["橡木法杖", 6] },
+  },
+};
+const PLAYABLE = ["warrior", "rogue", "mage"];      // 开局能选的三个（冒险者不算）
+
+/** 拿到玩家所属职业的那份资料；老存档没有 cls 就按冒险者算。 */
+const classOf = (player) => CLASSES[player.cls] || CLASSES.classic;
+
+// ===== 技能树（花技能点点亮的主动/被动技能）=====
+// 跟「升级天赋三选一」的分工：
+//   天赋 = 升级时随机抽三个，白送，纯被动加成
+//   技能 = 自己挑，花技能点，有主动技能（战斗里多出按钮）
+//
+// 一共三层，每层两个技能二选一：点亮了其中一个，另一个这一局就放弃了。
+// 必须逐层往下点（点了第一层才能点第二层），所以一局最多学三个、花三点。
+// 升级给 1 点，所以大约 3 级能把树走完。
+const SKILL_TIERS = [
+  [
+    { key: "smash", name: "强力打击", kind: "active", cooldown: 2,
+      text: "1.6 倍攻击，必中（高闪避的怪也躲不掉）" },
+    { key: "tough", name: "坚韧", kind: "passive",
+      text: "生命上限 +20，防御 +1",
+      run: (p) => { p.max_hp += 20; p.hp = Math.min(p.max_hp, p.hp + 20); p.defense += 1; } },
+  ],
+  [
+    { key: "double", name: "二连击", kind: "active", cooldown: 3,
+      text: "连打两下，每下 0.7 倍攻击（各自判定暴击）" },
+    { key: "aura", name: "吸血光环", kind: "passive",
+      text: "每回合自动回 3% 生命上限" },
+  ],
+  [
+    { key: "execute", name: "斩杀", kind: "active", cooldown: 4,
+      text: "敌人血量低于 35% 时直接处决，否则只造成 1.2 倍伤害" },
+    { key: "warspirit", name: "战意", kind: "passive",
+      text: "攻击 +5，暴击率 +10%",
+      run: (p) => { p.atk += 5; p.crit += 0.10; } },
+  ],
+];
+
+/** 技能 key → 技能本身，战斗和技能树里都要按 key 找回来。 */
+const SKILL_BY_KEY = {};
+for (const tier of SKILL_TIERS) for (const skill of tier) SKILL_BY_KEY[skill.key] = skill;
+
+/** 这个角色学过某个技能没有。（老存档没有 skills 字段，当空数组看） */
+const hasSkill = (player, key) => (player.skills || []).includes(key);
+
 const SAVE_FIELDS = ["level", "max_hp", "hp", "atk", "defense",
                      "gold", "xp", "kills", "depth", "weapon", "armor", "bag",
-                     "crit", "lifesteal", "dodge", "talents"];
+                     "crit", "lifesteal", "dodge", "talents", "cls",
+                     "skills", "points"];
 
-function newPlayer() {
+/** 造一件开局装备：数值写死、普通品质、没有词条、耐久按普通品质给。 */
+function starterGear(kind, name, value) {
+  const info = RARITIES.common;
+  return { kind: kind, name: name, rarity: "common", value: value, perfect: false,
+           affixes: [], durability: info.durability, max_durability: info.durability };
+}
+
+function newPlayer(cls = "classic") {
+  const info = classOf({ cls: cls });
   // crit/lifesteal/dodge 都是百分比（0.15 就是 15%）；talents 记着这一局选过哪些天赋
-  return { level: 1, max_hp: 50, hp: 50, atk: 6, defense: 2, crit: 0.15,
-           lifesteal: 0, dodge: 0, talents: [],
-           gold: 0, xp: 0, kills: 0, depth: 1, weapon: null, armor: null, bag: [] };
+  const player = { level: 1, max_hp: info.max_hp, hp: info.max_hp, atk: info.atk,
+                   defense: info.defense, crit: info.crit, lifesteal: 0, dodge: info.dodge,
+                   talents: [], skills: [], points: 0, cls: cls,
+                   gold: 0, xp: 0, kills: 0, depth: 1, weapon: null, armor: null, bag: [] };
+  // 白送的装备：战士两件，刺客和法师各一把武器
+  if (info.start.weapon) player.weapon = starterGear("weapon", info.start.weapon[0], info.start.weapon[1]);
+  if (info.start.armor) player.armor = starterGear("armor", info.start.armor[0], info.start.armor[1]);
+  return player;
 }
 
 /** 武器和护甲上同一种词条加起来有多少。（老存档的装备没有 affixes，跳过就行） */
@@ -305,6 +405,7 @@ function quitGame() {
 
 const CHOICES_ADVENTURE = [
   { key: "1", label: "前进" }, { key: "2", label: "背包" },
+  { key: "5", label: "技能" },
   { key: "3", label: "休息" }, { key: "4", label: "离开地牢" },
   { key: "S", label: "存档" }, { key: "L", label: "读档" },
 ];
@@ -328,8 +429,11 @@ const MUTANT_TITLES = ["狂暴的", "变异的", "发狂的", "漆黑的"];
 const mutateChance = (depth) => Math.min(0.22, 0.08 + depth * 0.01);
 
 function spawn(depth, boss) {
-  // 池子按深度从小到大放开：最浅的几层只有最弱的三只，越深越杂
-  const pool = MONSTERS.slice(0, Math.min(MONSTERS.length, 3 + Math.floor(depth / 2)));
+  // 池子是一个跟着深度往上挪的窗口：每往下两层，整窗口往前挪一格。
+  // 所以深处碰到的都是跟那一层相称的怪——老写法是"越深越杂"，
+  // 结果第 20 层还可能抽到 10 点血的洞穴鼠，厚甲职业靠挨打只掉 1 点就能无限磨。
+  const center = Math.min(MONSTERS.length - 2, Math.floor(depth / 2));
+  const pool = MONSTERS.slice(center, center + 3);
   const base = pickOne(pool);
   const grow = 1 + 0.18 * (depth - 1);
   const monster = {
@@ -446,10 +550,12 @@ function talentRow(player) {
 
 function statusRows(player) {
   const weapon = player.weapon
-    ? itemName(player.weapon) + GOLD + " +" + player.weapon.value + END + durabilityText(player.weapon)
+    ? gearWrap(player.weapon, itemName(player.weapon) + GOLD + " +" + player.weapon.value + END) +
+      durabilityText(player.weapon)
     : GREY + "空手" + END;
   const armor = player.armor
-    ? itemName(player.armor) + GOLD + " +" + player.armor.value + END + durabilityText(player.armor)
+    ? gearWrap(player.armor, itemName(player.armor) + GOLD + " +" + player.armor.value + END) +
+      durabilityText(player.armor)
     : GREY + "布衣" + END;
   return [
     "生命 " + bar(player.hp, player.max_hp, 20, RED) + "  金币 " + GOLD + player.gold + END,
@@ -461,7 +567,9 @@ function statusRows(player) {
 }
 
 function renderAdventure(player, log) {
-  const rows = [BOLD + "地牢冒险" + END + "   " + GREY + "第 " + player.depth + " 层" + END, SEP];
+  const info = classOf(player);
+  const rows = [BOLD + "地牢冒险" + END + "   " + info.color + info.name + END + "   " +
+                GREY + "第 " + player.depth + " 层" + END, SEP];
   rows.push(...statusRows(player));
   rows.push(SEP);
   rows.push(...log.slice(-7).map((line) => GREY + "·" + END + " " + line));
@@ -497,6 +605,14 @@ function renderCombat(player, monster, log) {
 function itemName(item) {
   const info = RARITIES[item.rarity] || RARITIES.common;
   return info.color + info.name + item.name + END;
+}
+
+/**
+ * 把装备的名字套进一个带品质类名的 <span>，好让 CSS 按品质加发光
+ * （紫装常亮、金装流光）。类名就是品质的英文名，见 index.html 里的 .gear.xxx。
+ */
+function gearWrap(item, html) {
+  return '<span class="gear ' + item.rarity + '">' + html + "</span>";
 }
 
 /** 摇到接近满值的装备标一颗星，一眼能看出来这件比同类好。 */
@@ -546,7 +662,7 @@ function itemRows(player, item) {
   const slot = item.kind === "weapon" ? "攻击" : "防御";
   const equipped = item.kind === "weapon" ? player.weapon === item : player.armor === item;
   const tag = equipped ? "  " + CYAN + "已装备" + END : "";
-  const rows = [itemName(item) + "  " + GOLD + "+" + item.value + END + " " + slot +
+  const rows = [gearWrap(item, itemName(item) + "  " + GOLD + "+" + item.value + END + " " + slot) +
                 qualityTag(item) + tag + compareTag(player, item) + durabilityText(item)];
   if (item.affixes && item.affixes.length) {
     rows.push("    " + CYAN + item.affixes.map(affixText).join("  ") + END);
@@ -593,12 +709,16 @@ async function gainXp(player, amount, log) {
   while (player.xp >= xpNeeded(player.level)) {
     player.xp -= xpNeeded(player.level);
     player.level += 1;
-    player.max_hp += 14;
-    player.hp = Math.min(player.max_hp, player.hp + 14);
-    player.atk += 2;
-    player.defense += 1;
+    // 每级涨多少由职业决定：战士涨血涨防，法师涨攻击
+    const growth = classOf(player).growth;
+    player.max_hp += growth.hp;
+    player.hp = Math.min(player.max_hp, player.hp + growth.hp);
+    player.atk += growth.atk;
+    player.defense += growth.def;
     add(log, GOLD + BOLD + "升级！" + END + GOLD + " 你现在是 " + player.level +
-             " 级（生命 +14，攻击 +2，防御 +1）。" + END);
+             " 级（生命 +" + growth.hp + "，攻击 +" + growth.atk + "，防御 +" + growth.def + "）。" + END);
+    player.points += 1;
+    add(log, GOLD + "技能点 +1" + END + GREY + "（冒险界面点「技能」去点亮技能树）" + END);
     flash("white");                  // 升级全屏白光一闪
     pause(0.8);
     await chooseTalent(player, log);
@@ -610,7 +730,8 @@ async function gainXp(player, amount, log) {
  * 选完立刻生效，并把 key 记进 player.talents（状态栏那一行就是它）。
  */
 async function chooseTalent(player, log) {
-  const pool = TALENTS.slice();
+  // 抽签池 = 通用天赋 + 本职业的专属天赋（别人的专属抽不到）
+  const pool = TALENTS.filter((talent) => !talent.cls || talent.cls === player.cls);
   const picks = [];
   while (picks.length < 3 && pool.length) {
     picks.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
@@ -632,6 +753,50 @@ async function chooseTalent(player, log) {
   pause(0.6);
 }
 
+/**
+ * 技能树界面。三层技能全列出来（看得见整棵树），但只有「点得起、又还没选过」的
+ * 才会长成按钮——所以屏幕上没有按钮就是这一层选过了、或者技能点不够。
+ */
+async function openSkills(player, log) {
+  while (true) {
+    const rows = [BOLD + "技能树" + END + "   " + GOLD + "技能点 " + player.points + END, SEP];
+    const choices = [];
+    SKILL_TIERS.forEach((tier, t) => {
+      const opened = t === 0 || SKILL_TIERS[t - 1].some((skill) => hasSkill(player, skill.key));
+      rows.push(GREY + "第 " + (t + 1) + " 层" + END);
+      tier.forEach((skill, i) => {
+        const learned = hasSkill(player, skill.key);
+        // 同一层只会点亮一个，所以另一个就是这一局放弃掉的那个
+        const given = tier.some((other) => other.key !== skill.key && hasSkill(player, other.key));
+        const tag = skill.kind === "active" ? RED + "主动" + END : CYAN + "被动" + END;
+        const mark = learned ? "   " + GREEN + "✔ 已点亮" + END
+                   : given ? "   " + GREY + "✘ 已放弃" + END : "";
+        rows.push("[" + (t + 1) + "·" + (i + 1) + "] " + BOLD + skill.name + END + "  " + tag + mark);
+        rows.push("      " + GREY + skill.text +
+                  (skill.cooldown ? "（冷却 " + skill.cooldown + " 回合）" : "") + END);
+        if (!learned && !given && opened && player.points > 0) {
+          choices.push({ key: skill.key, label: skill.name + "（1 点）" });
+        }
+      });
+      if (t < SKILL_TIERS.length - 1) rows.push(SEP);
+    });
+    if (!choices.length) {
+      rows.push(SEP, GREY + (player.points > 0 ? "这一层已经选过了，往下走要点亮上一层。" : "升级会给技能点，攒够再回来。") + END);
+    }
+    show(rows, PURPLE);
+
+    choices.push({ key: "0", label: "返回" });
+    const choice = await ask(choices);
+    if (choice === "0") return;
+    const skill = SKILL_BY_KEY[choice];
+    player.points -= 1;
+    player.skills.push(skill.key);
+    if (skill.run) skill.run(player);        // 被动技能：点亮的那一刻就生效
+    add(log, GOLD + "点亮技能「" + skill.name + "」——" + skill.text + END);
+    pause(0.6);
+  }
+}
+
 async function victory(player, monster, log) {
   player.kills += 1;
   player.gold += monster.gold;
@@ -645,7 +810,7 @@ async function victory(player, monster, log) {
     const loot = randomItem(player.depth, true, bossLootRarity(player.depth));
     if (player.bag.length >= BAG_LIMIT) makeRoom(player, log);   // 首领的东西不能因为背包满就丢了
     player.bag.push(loot);
-    add(log, lootColor(loot) + "你夺走了 " + itemName(loot) + qualityTag(loot) + "！" + END);
+    add(log, lootColor(loot) + "你夺走了 " + gearWrap(loot, itemName(loot)) + qualityTag(loot) + "！" + END);
     if (loot.perfect) flash("white");   // 爆出极品，全屏白光一闪
     pause(0.8);
   } else if (monster.mutant) {
@@ -706,17 +871,71 @@ function playerStrike(player, monster, log, heavy) {
     damage = damageOf(attackOf(player) * (crit ? 2 : 1), 0);
     add(log, mark + "你击中 " + PURPLE + monster.name + END + "，造成 " + GOLD + damage + END + " 点伤害。");
   }
+  dealDamage(player, monster, log, damage, crit);
+  pause(0.45);
+  return monster.hp <= 0;
+}
+
+/**
+ * 一次实际打出去的伤害要做的事：扣血、头顶飘字、暴击闪金边、按吸血比例回血。
+ * 普通攻击、重击、主动技能都走这里，免得各写一遍、改一处漏三处。
+ */
+function dealDamage(player, monster, log, damage, crit) {
   monster.hp -= damage;
   floatDamage("-" + damage, crit);   // 怪物头顶飘出伤害数字
   if (crit) flash("gold");           // 暴击时屏幕边缘闪一圈金边
-  // 吸血：打出去多少伤害，就按比例回自己一点血
   const stole = Math.floor(damage * stealOf(player));
   if (stole > 0) {
     const gained = heal(player, stole);
     if (gained > 0) add(log, GREEN + "吸血：你夺回 " + gained + " 点生命。" + END);
   }
-  pause(0.45);
+}
+
+/**
+ * 放一个主动技能。cooldowns 是这一场战斗的冷却表——每场战斗重新算，不用存进存档。
+ * 返回 true 表示怪被打死了。
+ */
+function useSkill(player, monster, log, skill, cooldowns) {
+  cooldowns[skill.key] = skill.cooldown;      // 这一场里它要歇这么多回合
+  if (skill.key === "smash") {
+    const damage = damageOf(attackOf(player) * 1.6, 0);
+    add(log, GOLD + BOLD + "强力打击！" + END + " " + PURPLE + monster.name + END +
+             " 躲不掉，硬吃 " + GOLD + damage + END + " 点伤害。");
+    dealDamage(player, monster, log, damage, false);
+  } else if (skill.key === "double") {
+    let total = 0;
+    for (let i = 0; i < 2 && monster.hp > 0; i++) {
+      const crit = Math.random() < critOf(player);
+      const damage = damageOf(attackOf(player) * 0.7 * (crit ? 2 : 1), 0);
+      total += damage;
+      dealDamage(player, monster, log, damage, crit);
+    }
+    add(log, GOLD + BOLD + "二连击！" + END + " " + PURPLE + monster.name + END +
+             " 一共挨了 " + GOLD + total + END + " 点伤害。");
+  } else if (monster.hp <= monster.max_hp * 0.35) {
+    // 斩杀：血少了就一刀带走
+    add(log, RED + BOLD + "斩杀！" + END + " " + PURPLE + monster.name + END + " 只剩 " +
+             monster.hp + " 点血，被你一刀处决。" + END);
+    dealDamage(player, monster, log, monster.hp, true);
+  } else {
+    const damage = damageOf(attackOf(player) * 1.2, 0);
+    add(log, GOLD + BOLD + "斩杀" + END + GREY + "（它血还太多，斩不动）" + END + " " +
+             PURPLE + monster.name + END + " 受到 " + GOLD + damage + END + " 点伤害。");
+    dealDamage(player, monster, log, damage, false);
+  }
+  pause(0.5);
   return monster.hp <= 0;
+}
+
+/**
+ * 战斗里能放的主动技能，做成按钮。
+ * 冷却还没好的干脆不摆出来——摆出来点了就得白等一回合，不如不点。
+ */
+function skillChoices(player, cooldowns) {
+  return (player.skills || [])
+    .map((key) => SKILL_BY_KEY[key])
+    .filter((skill) => skill && skill.kind === "active" && !cooldowns[skill.key])
+    .map((skill) => ({ key: skill.key, label: "★" + skill.name }));
 }
 
 /**
@@ -846,10 +1065,11 @@ async function fight(player, monster, log) {
   add(log, PURPLE + monster.name + " 挡住了去路！" + END);
   pause(0.6);
   wearGear(player, log);         // 真打起来了，武器和护甲各磨掉一点
+  const cooldowns = {};          // 主动技能的冷却，只在这一场里算
   let round = 0;                 // 打到第几回合（首领每 3 回合放绝招）
   while (player.hp > 0) {
     renderCombat(player, monster, log);
-    const choice = await ask(CHOICES_COMBAT);
+    const choice = await ask(CHOICES_COMBAT.concat(skillChoices(player, cooldowns)));
     if (choice === "3") {
       await openBag(player, log);
       add(log, GREY + "你翻背包的工夫，怪物又逼近了一步。" + END);
@@ -862,14 +1082,24 @@ async function fight(player, monster, log) {
       add(log, RED + "逃跑失败！" + END);
     } else if (choice === "1") {
       if (playerStrike(player, monster, log, false)) { await victory(player, monster, log); return; }
-    } else {
+    } else if (choice === "2") {
       if (playerStrike(player, monster, log, true)) { await victory(player, monster, log); return; }
+    } else if (useSkill(player, monster, log, SKILL_BY_KEY[choice], cooldowns)) {
+      await victory(player, monster, log);
+      return;
     }
     if (player.hp > 0) {
       round += 1;
       monsterStrike(player, monster, log, round);
       // 自爆的怪会把自己炸死，那也算你打赢了
       if (monster.hp <= 0) { await victory(player, monster, log); return; }
+      // 吸血光环是回合结束回血，挨完打才结算
+      if (hasSkill(player, "aura")) {
+        const gained = heal(player, Math.max(1, Math.floor(player.max_hp * 0.03)));
+        if (gained > 0) add(log, GREEN + "吸血光环夺回 " + gained + " 点生命。" + END);
+      }
+      // 冷却往前走一格
+      for (const key of Object.keys(cooldowns)) cooldowns[key] = Math.max(0, cooldowns[key] - 1);
     }
   }
 }
@@ -1113,9 +1343,10 @@ async function chooseSlot(action) {
 // ===== 九、结局画面 =====
 
 async function ending(player) {
+  const info = classOf(player);
   show([
     BOLD + RED + "你倒下了" + END, SEP,
-    "倒在 第 " + player.depth + " 层",
+    info.color + info.name + END + "  倒在 第 " + player.depth + " 层",
     "等级 " + player.level + "   击杀 " + player.kills + "   金币 " + GOLD + player.gold + END,
     "",
     GREY + "还能再战一局。" + END,
@@ -1124,9 +1355,10 @@ async function ending(player) {
 }
 
 async function farewell(player) {
+  const info = classOf(player);
   show([
     BOLD + "你离开了地牢" + END, SEP,
-    "最深到过 第 " + player.depth + " 层",
+    info.color + info.name + END + "  最深到过 第 " + player.depth + " 层",
     "等级 " + player.level + "   击杀 " + player.kills + "   金币 " + GOLD + player.gold + END,
     "",
     GREY + "存档还在云上，随时回来。" + END,
@@ -1137,25 +1369,55 @@ async function farewell(player) {
 
 // ===== 十、主循环 =====
 
-function newGame() {
-  const player = newPlayer();
+/**
+ * 开局先选职业。三个按钮对应 CLASSES 里能选的那三个，返回选中的 key。
+ * 每次「再来一局」都会重新问一次，所以换个职业就是一套新玩法。
+ */
+async function chooseClass() {
+  const rows = [BOLD + "选择一个职业" + END + "   " + GREY + "这一局都用它" + END, SEP];
+  PLAYABLE.forEach((key, i) => {
+    const info = CLASSES[key];
+    rows.push("[" + (i + 1) + "] " + info.color + BOLD + info.name + END + "  " + GREY + info.tag + END);
+    const gear = [];
+    if (info.start.weapon) gear.push(info.start.weapon[0] + " +" + info.start.weapon[1]);
+    if (info.start.armor) gear.push(info.start.armor[0] + " +" + info.start.armor[1]);
+    rows.push("    " + GREY + "生命 " + info.max_hp + "   攻击 " + info.atk + "   防御 " + info.defense +
+              (gear.length ? "   开局带 " + gear.join("、") : "") + END);
+  });
+  rows.push(SEP, GREY + "每个职业升级涨的东西不一样，天赋池里还各有两个专属天赋。" + END);
+  show(rows, CYAN);
+
+  const choices = PLAYABLE.map((key, i) => ({ key: String(i + 1), label: (i + 1) + " " + CLASSES[key].name }));
+  return PLAYABLE[Number(await ask(choices)) - 1];
+}
+
+function newGame(cls) {
+  const player = newPlayer(cls);
   const log = [];
   add(log, CYAN + "你推开地牢的铁门，霉味扑面而来。" + END);
+  const info = CLASSES[cls];
+  add(log, CYAN + "你是一名" + info.name + "——" + info.tag + "。" + END);
   return [player, log];
 }
 
 async function play() {
   quitRequested = false;    // 新的一局开始，把上次注销的记号清掉
   while (true) {
-    let [player, log] = newGame();
+    const cls = await chooseClass();
+    let [player, log] = newGame(cls);
     while (player.hp > 0) {
       renderAdventure(player, log);
-      const choice = await ask(CHOICES_ADVENTURE);
+      // 「技能」按钮上带着没花掉的技能点，一眼就知道还有东西没点
+      const choices = CHOICES_ADVENTURE.map((one) =>
+        one.key === "5" && player.points > 0 ? { key: "5", label: "技能 " + player.points } : one);
+      const choice = await ask(choices);
 
       if (choice === "1") {
         await advance(player, log);
       } else if (choice === "2") {
         await openBag(player, log);
+      } else if (choice === "5") {
+        await openSkills(player, log);
       } else if (choice === "3") {
         await rest(player, log);
       } else if (choice === "S") {
