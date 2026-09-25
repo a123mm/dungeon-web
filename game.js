@@ -185,19 +185,19 @@ const CLASSES = {
   },
   warrior: {
     name: "战士", tag: "高血高防", color: RED,
-    max_hp: 58, atk: 6, defense: 3, crit: 0.08, dodge: 0,
+    max_hp: 68, atk: 6, defense: 3, crit: 0.08, dodge: 0,
     growth: { hp: 18, atk: 1, def: 2 },
     start: { weapon: ["铁剑", 3], armor: ["皮甲", 2] },
   },
   rogue: {
     name: "刺客", tag: "高暴击高闪避", color: PURPLE,
-    max_hp: 42, atk: 6, defense: 2, crit: 0.35, dodge: 0.15,
+    max_hp: 42, atk: 6, defense: 2, crit: 0.40, dodge: 0.15,
     growth: { hp: 10, atk: 3, def: 1 },
     start: { weapon: ["精灵匕首", 5] },
   },
   mage: {
     name: "法师", tag: "高攻低血", color: BLUE,
-    max_hp: 38, atk: 11, defense: 1, crit: 0.12, dodge: 0.05,
+    max_hp: 38, atk: 13, defense: 1, crit: 0.12, dodge: 0.05,
     growth: { hp: 8, atk: 3, def: 0 },
     start: { weapon: ["橡木法杖", 6] },
   },
@@ -1400,11 +1400,43 @@ function newGame(cls) {
   return [player, log];
 }
 
+// ===== 彩蛋：只在新开一局的第一层，撞大运才碰得到 =====
+//
+// 新开一局时掷一次骰子（EGG_ODDS），中了就在楼梯口放一段小插曲。
+// 纯惊喜、稳赚不赔：两个选项都是好事，不会给刚下地牢的人下马威。
+const EGG_ODDS = 0.3;
+
+async function floorOneEgg(player, log) {
+  add(log, GOLD + "楼梯口的阴影里，蹲着一只三花猫，脖子上挂着个小布袋。" + END);
+  pause(0.6);
+  show([
+    BOLD + GOLD + "※ 彩蛋  一只三花猫" + END, SEP,
+    "它歪着头看你，尾巴轻甩，布袋里叮当响。",
+    GREY + "（运气不错——这一局才碰得到）" + END,
+  ], GOLD);
+
+  const choice = await ask([
+    { key: "1", label: "摸摸它的头" },
+    { key: "2", label: "解开布袋" },
+  ]);
+
+  if (choice === "1") {
+    const gained = heal(player, Math.max(10, Math.floor(player.max_hp / 3)));
+    add(log, GREEN + "猫打起呼噜，你莫名安心，恢复 " + gained + " 点生命。" + END);
+  } else {
+    const coins = 20 + Math.floor(Math.random() * 21);
+    player.gold += coins;
+    add(log, GOLD + "布袋里滚出 " + coins + " 枚金币，猫冲你眨眨眼，溜走了。" + END);
+  }
+  pause(0.6);
+}
+
 async function play() {
   quitRequested = false;    // 新的一局开始，把上次注销的记号清掉
   while (true) {
     const cls = await chooseClass();
     let [player, log] = newGame(cls);
+    if (Math.random() < EGG_ODDS) await floorOneEgg(player, log);
     while (player.hp > 0) {
       renderAdventure(player, log);
       // 「技能」按钮上带着没花掉的技能点，一眼就知道还有东西没点
